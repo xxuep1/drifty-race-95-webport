@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Unity WebGL Loader</title>
+<title>Drifty Race 95</title>
 <style>
 html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:monospace;color:#fff}
 #canvas{width:100vw;height:100vh;display:block;background:#111;outline:none}
@@ -18,75 +18,113 @@ html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#
 <div id="loading"><div id="label">LOADING</div><div id="bar"><div id="fill"></div></div><div id="msg"></div></div>
 
 <script>
-/* ============ ASSIGN YOUR FILES HERE ============ */
+  
 const BASE = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/";
 
-const LOADER    = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.loader.js";
-const FRAMEWORK = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.framework.js.unityweb";
+const LOADER    = "driftyrace_web1.33.loader.js";
+const FRAMEWORK = "driftyrace_web1.33.framework.js.unityweb";
 
-const DATA1 = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.data.unityweb.part1";
-const DATA2 = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.data.unityweb.part2";
-const DATA3 = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.data.unityweb.part3";
-const DATA4 = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.data.unityweb.part4";
+const DATA1 = "driftyrace_web1.33.data.unityweb.part1";
+const DATA2 = "driftyrace_web1.33.data.unityweb.part2";
+const DATA3 = "driftyrace_web1.33.data.unityweb.part3";
+const DATA4 = "driftyrace_web1.33.data.unityweb.part4";
 
-const WASM1 = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.wasm.unityweb.part1";
-const WASM2 = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.wasm.unityweb.part2";
-
-// Unity runs one data + one wasm at a time. Pick which ones it boots with:
-const USE_DATA = DATA1;
-const USE_WASM = WASM1;
+const WASM1 = "driftyrace_web1.33.wasm.unityweb.part1";
+const WASM2 = "driftyrace_web1.33.wasm.unityweb.part2";
 
 const STREAMING_ASSETS = BASE + "StreamingAssets";
-/* ================================================== */
 
 const $ = id => document.getElementById(id);
-const url = f => BASE + encodeURIComponent(f);
-const ALL = [LOADER, FRAMEWORK, DATA1, DATA2, DATA3, DATA4, WASM1, WASM2].filter(Boolean);
+const url = f => /^https?:\/\//i.test(f) ? f : BASE + encodeURIComponent(f);
+const whole = f => url(f).replace(/\.part\d+$/i, "");  
 
-function loadScript(src){
-  return new Promise((ok, fail) => {
+const DATA_PARTS = [DATA1, DATA2, DATA3, DATA4].filter(Boolean);
+const WASM_PARTS = [WASM1, WASM2].filter(Boolean);
+
+
+async function loadScript(src){
+  const r = await fetch(src);
+  if (!r.ok) throw new Error("HTTP " + r.status + " for " + src);
+  const code = await r.text();
+  const blobUrl = URL.createObjectURL(new Blob([code], {type: "text/javascript"}));
+  await new Promise((ok, fail) => {
     const s = document.createElement("script");
-    s.src = src;
+    s.src = blobUrl;
     s.onload = ok;
-    s.onerror = () => fail(new Error("Could not load " + src));
+    s.onerror = () => fail(new Error("Could not run " + src));
     document.body.appendChild(s);
   });
 }
 
-// Download every assigned file up front (all of them end up in the browser cache)
-async function fetchAll(){
-  let done = 0;
-  await Promise.all(ALL.map(async f => {
-    const r = await fetch(url(f), {cache: "force-cache"});
+
+async function downloadJoined(parts, tick){
+  const resps = await Promise.all(parts.map(async f => {
+    const r = await fetch(url(f));
     if (!r.ok) throw new Error("HTTP " + r.status + " for " + f);
-    await r.arrayBuffer();
-    done++;
-    $("label").textContent = "DOWNLOADING " + done + "/" + ALL.length;
-    $("fill").style.width = (done / ALL.length * 50) + "%";
+    return r;
   }));
+  const chunks = resps.map(() => []);
+  await Promise.all(resps.map(async (r, i) => {
+    const reader = r.body.getReader();
+    for (;;) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      chunks[i].push(value);
+      tick(value.length);
+    }
+  }));
+  return new Blob(chunks.flat(), {type: "application/octet-stream"});
 }
 
 (async () => {
   try {
-    if (!LOADER || !FRAMEWORK || !USE_DATA || !USE_WASM) throw new Error("Fill in LOADER, FRAMEWORK, and at least DATA1 + WASM1 at the top of the file.");
+    const sizes = await Promise.all([...DATA_PARTS, ...WASM_PARTS].map(async f => {
+      try { const r = await fetch(url(f), {method: "HEAD"}); return Number(r.headers.get("content-length")) || 0; }
+      catch (e) { return 0; }
+    }));
+    const total = sizes.reduce((a, b) => a + b, 0);
+    let loaded = 0;
+    const tick = n => {
+      loaded += n;
+      const pct = total ? Math.min(loaded / total, 1) : 0;
+      $("fill").style.width = (pct * 60) + "%";
+      $("label").textContent = "DOWNLOADING " + Math.round(pct * 100) + "%";
+    };
 
-    await fetchAll();
+    const [dataBlob, wasmBlob] = await Promise.all([
+      downloadJoined(DATA_PARTS, tick),
+      downloadJoined(WASM_PARTS, tick)
+    ]);
+
+    const virtual = new Map([[whole(DATA1), dataBlob], [whole(WASM1), wasmBlob]]);
+    const realFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const u = typeof input === "string" ? input : input.url;
+      const blob = virtual.get(u);
+      if (blob) {
+        return Promise.resolve(new Response(blob, {
+          status: 200,
+          headers: {"Content-Type": "application/octet-stream", "Content-Length": String(blob.size)}
+        }));
+      }
+      return realFetch(input, init);
+    };
 
     $("label").textContent = "STARTING";
     await loadScript(url(LOADER));
     if (typeof createUnityInstance !== "function") throw new Error("Loader did not initialize.");
 
     window.unityInstance = await createUnityInstance($("canvas"), {
-      dataUrl: url(USE_DATA),
+      dataUrl: whole(DATA1),
       frameworkUrl: url(FRAMEWORK),
-      codeUrl: url(USE_WASM),
+      codeUrl: whole(WASM1),
       streamingAssetsUrl: STREAMING_ASSETS,
-      companyName: "DefaultCompany",
-      productName: "Unity Game",
-      productVersion: "1.0",
+      companyName: "idek who made this",
+      productName: "Drifty Race 95",
+      productVersion: "1.33",
       decompressionFallback: true,
       showBanner: (m, t) => { if (t === "error") $("msg").textContent = m; }
-    }, p => { $("fill").style.width = (50 + p * 50) + "%"; });
+    }, p => { $("fill").style.width = (60 + p * 40) + "%"; });
 
     $("loading").style.display = "none";
     $("canvas").focus();
