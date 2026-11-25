@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Unity WebGL Loader</title>
+<style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000;font-family:monospace;color:#fff}
+#canvas{width:100vw;height:100vh;display:block;background:#111;outline:none}
+#loading{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);width:min(320px,70vw);text-align:center}
+#bar{margin-top:10px;height:14px;border:2px solid #fff}
+#fill{height:100%;width:0;background:#4caf50}
+#msg{margin-top:10px;color:#ff8a80;white-space:pre-wrap}
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1"></canvas>
+<div id="loading"><div id="label">LOADING</div><div id="bar"><div id="fill"></div></div><div id="msg"></div></div>
+
+<script>
+/* ============ ASSIGN YOUR FILES HERE ============ */
+const BASE = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/";
+
+const LOADER    = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.loader.js";
+const FRAMEWORK = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.framework.js.unityweb";
+
+const DATA1 = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.data.unityweb.part1";
+const DATA2 = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.data.unityweb.part2";
+const DATA3 = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.data.unityweb.part3";
+const DATA4 = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.data.unityweb.part4";
+
+const WASM1 = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.wasm.unityweb.part1";
+const WASM2 = "https://raw.githubusercontent.com/xxuep1/drifty-race-95-webport/main/Build/driftyrace_web1.33.wasm.unityweb.part2";
+
+// Unity runs one data + one wasm at a time. Pick which ones it boots with:
+const USE_DATA = DATA1;
+const USE_WASM = WASM1;
+
+const STREAMING_ASSETS = BASE + "StreamingAssets";
+/* ================================================== */
+
+const $ = id => document.getElementById(id);
+const url = f => BASE + encodeURIComponent(f);
+const ALL = [LOADER, FRAMEWORK, DATA1, DATA2, DATA3, DATA4, WASM1, WASM2].filter(Boolean);
+
+function loadScript(src){
+  return new Promise((ok, fail) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = ok;
+    s.onerror = () => fail(new Error("Could not load " + src));
+    document.body.appendChild(s);
+  });
+}
+
+// Download every assigned file up front (all of them end up in the browser cache)
+async function fetchAll(){
+  let done = 0;
+  await Promise.all(ALL.map(async f => {
+    const r = await fetch(url(f), {cache: "force-cache"});
+    if (!r.ok) throw new Error("HTTP " + r.status + " for " + f);
+    await r.arrayBuffer();
+    done++;
+    $("label").textContent = "DOWNLOADING " + done + "/" + ALL.length;
+    $("fill").style.width = (done / ALL.length * 50) + "%";
+  }));
+}
+
+(async () => {
+  try {
+    if (!LOADER || !FRAMEWORK || !USE_DATA || !USE_WASM) throw new Error("Fill in LOADER, FRAMEWORK, and at least DATA1 + WASM1 at the top of the file.");
+
+    await fetchAll();
+
+    $("label").textContent = "STARTING";
+    await loadScript(url(LOADER));
+    if (typeof createUnityInstance !== "function") throw new Error("Loader did not initialize.");
+
+    window.unityInstance = await createUnityInstance($("canvas"), {
+      dataUrl: url(USE_DATA),
+      frameworkUrl: url(FRAMEWORK),
+      codeUrl: url(USE_WASM),
+      streamingAssetsUrl: STREAMING_ASSETS,
+      companyName: "DefaultCompany",
+      productName: "Unity Game",
+      productVersion: "1.0",
+      decompressionFallback: true,
+      showBanner: (m, t) => { if (t === "error") $("msg").textContent = m; }
+    }, p => { $("fill").style.width = (50 + p * 50) + "%"; });
+
+    $("loading").style.display = "none";
+    $("canvas").focus();
+  } catch (e) {
+    console.error(e);
+    $("label").textContent = "LOAD FAILED";
+    $("msg").textContent = e.message || String(e);
+  }
+})();
+</script>
+</body>
+</html>
